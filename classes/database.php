@@ -1,20 +1,26 @@
 <?php
 class Database {
-    private $host = "localhost";
-    private $db_name = "petty_cash_db";
-    private $username = "root";
-    private $password = "";
+    // InfinityFree database credentials
+    private $host = "sql100.infinityfree.com";
+    private $db_name = "if0_40681784_petty_cash_db";
+    private $username = "if0_40681784";
+    private $password = "libertylibre223";
     public $conn;
 
     public function connect() {
         $this->conn = null;
 
         try {
-            $this->conn = new PDO("mysql:host=" . $this->host . ";dbname=" . $this->db_name,
-                                  $this->username, $this->password);
-            $this->conn->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+            $dsn = "mysql:host=" . $this->host . ";dbname=" . $this->db_name . ";charset=utf8mb4";
+            $options = [
+                PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+                PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+                PDO::ATTR_EMULATE_PREPARES => false,
+            ];
+            $this->conn = new PDO($dsn, $this->username, $this->password, $options);
         } catch (PDOException $e) {
-            echo "Database connection error: " . $e->getMessage();
+            error_log("Database connection error: " . $e->getMessage());
+            die("Database connection failed. Please try again later.");
         }
 
         return $this->conn;
@@ -22,10 +28,6 @@ class Database {
 
     public function createTables() {
         $conn = $this->connect();
-
-        // Create database if not exists
-        $conn->exec("CREATE DATABASE IF NOT EXISTS petty_cash_db");
-        $conn->exec("USE petty_cash_db");
 
         // Create tables only if they don't exist
         $sql = "CREATE TABLE IF NOT EXISTS users (
@@ -39,30 +41,48 @@ class Database {
             email_verified TINYINT(1) DEFAULT 0,
             verification_token VARCHAR(255) NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )";
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci";
 
         $conn->exec($sql);
 
         // Helper function to check if a column exists
-        function columnExists($conn, $table, $column) {
-            $stmt = $conn->prepare("SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?");
-            $stmt->execute([$table, $column]);
-            return $stmt->fetchColumn() > 0;
+        if (!function_exists('columnExists')) {
+            function columnExists($conn, $table, $column) {
+                try {
+                    $stmt = $conn->prepare("SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?");
+                    $stmt->execute([$table, $column]);
+                    return $stmt->fetchColumn() > 0;
+                } catch (PDOException $e) {
+                    return false;
+                }
+            }
         }
 
         // Add email column if it does not exist
         if (!columnExists($conn, 'users', 'email')) {
-            $conn->exec("ALTER TABLE users ADD COLUMN email VARCHAR(100) UNIQUE NULL");
+            try {
+                $conn->exec("ALTER TABLE users ADD COLUMN email VARCHAR(100) UNIQUE NULL");
+            } catch (PDOException $e) {
+                // Column might already exist, ignore
+            }
         }
 
         // Add email_verified column if it does not exist
         if (!columnExists($conn, 'users', 'email_verified')) {
-            $conn->exec("ALTER TABLE users ADD COLUMN email_verified TINYINT(1) DEFAULT 0");
+            try {
+                $conn->exec("ALTER TABLE users ADD COLUMN email_verified TINYINT(1) DEFAULT 0");
+            } catch (PDOException $e) {
+                // Column might already exist, ignore
+            }
         }
 
         // Add verification_token column if it does not exist
         if (!columnExists($conn, 'users', 'verification_token')) {
-            $conn->exec("ALTER TABLE users ADD COLUMN verification_token VARCHAR(255) NULL");
+            try {
+                $conn->exec("ALTER TABLE users ADD COLUMN verification_token VARCHAR(255) NULL");
+            } catch (PDOException $e) {
+                // Column might already exist, ignore
+            }
         }
 
         $sql = "CREATE TABLE IF NOT EXISTS petty_cash_requests (
@@ -87,7 +107,7 @@ class Database {
             date_liquidated DATE NULL,
             rejection_reason TEXT NULL,
             FOREIGN KEY (user_id) REFERENCES users(id)
-        )";
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci";
 
         $conn->exec($sql);
 
@@ -98,15 +118,17 @@ class Database {
             amount DECIMAL(10,2) NOT NULL,
             receipts TEXT NULL,
             FOREIGN KEY (request_id) REFERENCES petty_cash_requests(request_id) ON DELETE CASCADE
-        )";
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci";
 
         $conn->exec($sql);
 
         // Add rejection_reason column if not exists
-        try {
-            $conn->exec("ALTER TABLE petty_cash_requests ADD COLUMN rejection_reason TEXT NULL");
-        } catch (PDOException $e) {
-            // Column might already exist, ignore error
+        if (!columnExists($conn, 'petty_cash_requests', 'rejection_reason')) {
+            try {
+                $conn->exec("ALTER TABLE petty_cash_requests ADD COLUMN rejection_reason TEXT NULL");
+            } catch (PDOException $e) {
+                // Column might already exist, ignore
+            }
         }
 
         // Insert admin user only if not exists
