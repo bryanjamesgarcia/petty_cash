@@ -4,7 +4,7 @@ class Database {
     private $host = "sql100.infinityfree.com";
     private $db_name = "if0_40681784_petty_cash_db";
     private $username = "if0_40681784";
-    private $password = "libertylibre223";
+    private $password = "";
     public $conn;
 
     public function connect() {
