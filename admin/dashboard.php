@@ -33,30 +33,57 @@ $section = isset($_GET['section']) ? $_GET['section'] : 'dashboard';
 // Handle status update for requests
 if (isset($_POST['action']) && isset($_POST['id'])) {
     if ($_POST['action'] == 'reject') {
-        $status = 'Rejected';
+        // Get the Rejected status ID
+        $stmt = $conn->prepare("SELECT id FROM request_statuses WHERE status_name = 'Rejected'");
+        $stmt->execute();
+        $status_id = $stmt->fetchColumn();
+        
         $rejection_reason = isset($_POST['rejection_reason']) ? trim($_POST['rejection_reason']) : null;
-        $stmt = $conn->prepare("UPDATE petty_cash_requests SET status = ?, rejection_reason = ? WHERE id = ?");
-        $stmt->execute([$status, $rejection_reason, $_POST['id']]);
+        $stmt = $conn->prepare("UPDATE petty_cash_requests SET status_id = ?, rejection_reason = ? WHERE id = ?");
+        $stmt->execute([$status_id, $rejection_reason, $_POST['id']]);
         $message = "Request rejected successfully.";
     } elseif ($_POST['action'] == 'reject_liquidation') {
-        $liquidation_status = 'Rejected';
+        // Get the Rejected liquidation status ID
+        $stmt = $conn->prepare("SELECT id FROM liquidation_statuses WHERE status_name = 'Rejected'");
+        $stmt->execute();
+        $liquidation_status_id = $stmt->fetchColumn();
+        
         $rejection_reason = isset($_POST['rejection_reason']) ? trim($_POST['rejection_reason']) : null;
-        $stmt = $conn->prepare("UPDATE petty_cash_requests SET liquidation_status = ?, status = 'Liquidated', rejection_reason = ? WHERE id = ?");
-        $stmt->execute([$liquidation_status, $rejection_reason, $_POST['id']]);
+        $stmt = $conn->prepare("UPDATE liquidations SET status_id = ?, rejection_reason = ? WHERE request_id = ?");
+        $stmt->execute([$liquidation_status_id, $rejection_reason, $_POST['id']]);
         $message = "Liquidation rejected successfully.";
     }
     header("Location: dashboard.php?section=view_requests");
     exit();
 } elseif (isset($_GET['action']) && isset($_GET['id'])) {
     if ($_GET['action'] == 'approve') {
-        $status = 'Approved';
-        $stmt = $conn->prepare("UPDATE petty_cash_requests SET status = ? WHERE id = ?");
-        $stmt->execute([$status, $_GET['id']]);
+        // Get the Approved status ID
+        $stmt = $conn->prepare("SELECT id FROM request_statuses WHERE status_name = 'Approved'");
+        $stmt->execute();
+        $status_id = $stmt->fetchColumn();
+        
+        $stmt = $conn->prepare("UPDATE petty_cash_requests SET status_id = ?, date_approved = NOW(), approved_by = ? WHERE id = ?");
+        $stmt->execute([$status_id, $_SESSION['user']['id'], $_GET['id']]);
         $message = "Request approved successfully.";
     } elseif ($_GET['action'] == 'approve_liquidation') {
-        $liquidation_status = 'Approved';
-        $stmt = $conn->prepare("UPDATE petty_cash_requests SET liquidation_status = ?, status = 'Liquidated' WHERE id = ?");
-        $stmt->execute([$liquidation_status, $_GET['id']]);
+        // Get the Approved liquidation status ID
+        $stmt = $conn->prepare("SELECT id FROM liquidation_statuses WHERE status_name = 'Approved'");
+        $stmt->execute();
+        $liquidation_status_id = $stmt->fetchColumn();
+        
+        // Get the Liquidated request status ID
+        $stmt = $conn->prepare("SELECT id FROM request_statuses WHERE status_name = 'Liquidated'");
+        $stmt->execute();
+        $request_status_id = $stmt->fetchColumn();
+        
+        // Update liquidation
+        $stmt = $conn->prepare("UPDATE liquidations SET status_id = ?, date_approved = NOW(), approved_by = ? WHERE request_id = ?");
+        $stmt->execute([$liquidation_status_id, $_SESSION['user']['id'], $_GET['id']]);
+        
+        // Update request status to Liquidated
+        $stmt = $conn->prepare("UPDATE petty_cash_requests SET status_id = ? WHERE id = ?");
+        $stmt->execute([$request_status_id, $_GET['id']]);
+        
         $message = "Liquidation approved successfully.";
     }
     header("Location: dashboard.php?section=view_requests");
@@ -183,12 +210,15 @@ if ($section == 'dashboard') {
     $employees = $stmt->fetchAll(PDO::FETCH_ASSOC);
 } elseif ($section == 'view_requests') {
     $stmt = $conn->prepare("SELECT pr.*, u.full_name as employee_name, d.dept_name as department, 
-                            rs.status_name as status, ec.category_name as expense_category
+                            rs.status_name as status, ec.category_name as expense_category,
+                            l.id as liquidation_id, ls.status_name as liquidation_status, l.total_spent
                             FROM petty_cash_requests pr
                             JOIN users u ON pr.user_id = u.id
                             LEFT JOIN departments d ON u.dept_id = d.id
                             JOIN request_statuses rs ON pr.status_id = rs.id
                             JOIN expense_categories ec ON pr.category_id = ec.id
+                            LEFT JOIN liquidations l ON pr.id = l.request_id
+                            LEFT JOIN liquidation_statuses ls ON l.status_id = ls.id
                             ORDER BY pr.date_requested DESC");
     $stmt->execute();
     $requests = $stmt->fetchAll(PDO::FETCH_ASSOC);
@@ -371,7 +401,7 @@ if ($section == 'dashboard') {
                                 <tr>
                                     <td><?= htmlspecialchars($emp['name']) ?></td>
                                     <td><?= htmlspecialchars($emp['username']) ?></td>
-                                    <td><?= htmlspecialchars($emp['department']) ?></td>
+                                    <td><?= htmlspecialchars($emp['department'] ?? 'N/A') ?></td>
                                     <td><?= htmlspecialchars($emp['role']) ?></td>
                                     <td>
                                         <form method="POST" style="display:inline;">
@@ -409,6 +439,7 @@ if ($section == 'dashboard') {
                                     <th>Purpose</th>
                                     <th>Date</th>
                                     <th>Status</th>
+                                    <th>Liquidation</th>
                                     <th>Action</th>
                                 </tr>
                             </thead>
@@ -417,7 +448,7 @@ if ($section == 'dashboard') {
                                 <tr>
                                     <td><?= htmlspecialchars($r['request_number']) ?></td>
                                     <td><?= htmlspecialchars($r['employee_name']) ?></td>
-                                    <td><?= htmlspecialchars($r['department']) ?></td>
+                                    <td><?= htmlspecialchars($r['department'] ?? 'N/A') ?></td>
                                     <td>₱<?= number_format($r['amount_requested'], 2) ?></td>
                                     <td><?= htmlspecialchars($r['expense_category']) ?></td>
                                     <td>
@@ -429,10 +460,28 @@ if ($section == 'dashboard') {
                                     <td><?= htmlspecialchars($r['date_requested']) ?></td>
                                     <td><?= htmlspecialchars($r['status']) ?></td>
                                     <td>
+                                        <?php if (!empty($r['liquidation_status'])): ?>
+                                            <?= htmlspecialchars($r['liquidation_status']) ?>
+                                            <?php if ($r['total_spent']): ?>
+                                                <br><small>Spent: ₱<?= number_format($r['total_spent'], 2) ?></small>
+                                            <?php endif; ?>
+                                        <?php else: ?>
+                                            Not Submitted
+                                        <?php endif; ?>
+                                    </td>
+                                    <td>
                                         <?php if ($r['status'] == 'Pending'): ?>
                                             <a href="?section=view_requests&action=approve&id=<?= $r['id'] ?>" class="btn btn-sm btn-success">Approve</a>
                                             <form method="POST" style="display:inline;" onsubmit="return confirm('Are you sure you want to reject this request?')">
                                                 <input type="hidden" name="action" value="reject">
+                                                <input type="hidden" name="id" value="<?= $r['id'] ?>">
+                                                <textarea name="rejection_reason" placeholder="Rejection reason" class="form-control" required style="width: 150px; height: 40px;"></textarea>
+                                                <button type="submit" class="btn btn-sm btn-danger mt-1">Reject</button>
+                                            </form>
+                                        <?php elseif (!empty($r['liquidation_status']) && $r['liquidation_status'] == 'Pending'): ?>
+                                            <a href="?section=view_requests&action=approve_liquidation&id=<?= $r['id'] ?>" class="btn btn-sm btn-success">Approve Liquidation</a>
+                                            <form method="POST" style="display:inline;" onsubmit="return confirm('Are you sure you want to reject this liquidation?')">
+                                                <input type="hidden" name="action" value="reject_liquidation">
                                                 <input type="hidden" name="id" value="<?= $r['id'] ?>">
                                                 <textarea name="rejection_reason" placeholder="Rejection reason" class="form-control" required style="width: 150px; height: 40px;"></textarea>
                                                 <button type="submit" class="btn btn-sm btn-danger mt-1">Reject</button>
