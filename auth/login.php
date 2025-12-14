@@ -1,32 +1,47 @@
 <?php
+// START OUTPUT BUFFERING IMMEDIATELY - BEFORE ANYTHING ELSE
+ob_start();
+
+// Set error reporting
+error_reporting(E_ALL);
+ini_set('display_errors', 1);
+
+// Set session path for InfinityFree
+$session_path = dirname(__DIR__) . '/sessions';
+if (!is_dir($session_path)) {
+    @mkdir($session_path, 0755, true);
+}
+ini_set('session.save_path', $session_path);
+
 session_start();
+
 require_once '../classes/database.php';
-require_once '../classes/EmailSender.php';
 
 $db = new Database();
-$db->createTables(); // Ensure tables exist
 $conn = $db->connect();
 
 $message = '';
 $show_registration = isset($_GET['register']);
-$show_resend_form = false; // Flag to show resend form
+$show_resend_form = false;
 
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     if (isset($_POST['login'])) {
-        $username = $_POST['username'];
+        $username = trim($_POST['username']);
         $password = $_POST['password'];
 
-        // Query user from database
-        $stmt = $conn->prepare("SELECT id, username, password, role, name, department, email, email_verified FROM users WHERE username = ?");
-        $stmt->execute([$username]);
-        $user = $stmt->fetch(PDO::FETCH_ASSOC);
+        try {
+            $stmt = $conn->prepare("
+                SELECT u.id, u.username, u.password, r.role_name as role, u.full_name as name, 
+                       d.dept_name as department, u.email, u.email_verified, u.is_active 
+                FROM users u
+                LEFT JOIN roles r ON u.role_id = r.id
+                LEFT JOIN departments d ON u.dept_id = d.id
+                WHERE u.username = ? AND u.is_active = 1
+            ");
+            $stmt->execute([$username]);
+            $user = $stmt->fetch(PDO::FETCH_ASSOC);
 
-        if ($user && password_verify($password, $user['password'])) {
-            if ($user['email_verified'] == 0) {
-                $message = "Please verify your email before logging in.";
-                $show_resend_form = true;
-                $resend_username = $username; // To prefill the resend form
-            } else {
+            if ($user && password_verify($password, $user['password'])) {
                 $_SESSION['user'] = [
                     'id' => $user['id'],
                     'username' => $user['username'],
@@ -35,16 +50,33 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                     'department' => $user['department']
                 ];
 
+                // Update last login
+                try {
+                    $stmt = $conn->prepare("UPDATE users SET last_login = NOW() WHERE id = ?");
+                    $stmt->execute([$user['id']]);
+                } catch (PDOException $e) {
+                    // Ignore if update fails
+                }
+
+                // CLEAR OUTPUT BUFFER BEFORE REDIRECT
+                ob_end_clean();
+                
+                // Redirect based on role
                 if ($user['role'] == 'admin') {
                     header("Location: ../admin/dashboard.php");
+                    exit();
                 } else {
                     header("Location: ../employee/dashboard.php");
+                    exit();
                 }
-                exit();
+            } else {
+                $message = "Invalid username or password!";
             }
-        } else {
-            $message = "Invalid credentials!";
+        } catch (PDOException $e) {
+            $message = "Database error: " . $e->getMessage();
+            error_log("Login error: " . $e->getMessage());
         }
+        
     } elseif (isset($_POST['register'])) {
         $username = trim($_POST['reg_username']);
         $password = $_POST['reg_password'];
@@ -57,69 +89,49 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         } elseif (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
             $message = "Invalid email format.";
         } else {
-            $stmt = $conn->prepare("SELECT COUNT(*) FROM users WHERE username = ?");
-            $stmt->execute([$username]);
-            if ($stmt->fetchColumn() > 0) {
-                $message = "Username already exists.";
-            } else {
-                $stmt = $conn->prepare("SELECT COUNT(*) FROM users WHERE email = ?");
-                $stmt->execute([$email]);
+            try {
+                $stmt = $conn->prepare("SELECT COUNT(*) FROM users WHERE username = ?");
+                $stmt->execute([$username]);
                 if ($stmt->fetchColumn() > 0) {
-                    $message = "Email already registered.";
+                    $message = "Username already exists.";
                 } else {
-                    $hashed_password = password_hash($password, PASSWORD_DEFAULT);
-                    $verification_token = bin2hex(random_bytes(32));
-
-                    $stmt = $conn->prepare("INSERT INTO users (username, password, role, name, department, email, verification_token) VALUES (?, ?, 'employee', ?, ?, ?, ?)");
-                    $stmt->execute([$username, $hashed_password, $name, $department, $email, $verification_token]);
-
-                    $emailSender = new EmailSender();
-                    if ($emailSender->sendEmailVerification($email, $username, $verification_token)) {
-                        $message = "Registration successful! Please check your email to verify your account.";
-                        $show_registration = false;
+                    $stmt = $conn->prepare("SELECT COUNT(*) FROM users WHERE email = ?");
+                    $stmt->execute([$email]);
+                    if ($stmt->fetchColumn() > 0) {
+                        $message = "Email already registered.";
                     } else {
-                        $message = "Registration successful, but failed to send verification email. Please contact admin.";
+                        $hashed_password = password_hash($password, PASSWORD_DEFAULT);
+                        $verification_token = bin2hex(random_bytes(32));
+
+                        // Find or create department
+                        $stmt = $conn->prepare("SELECT id FROM departments WHERE dept_name = ?");
+                        $stmt->execute([$department]);
+                        $dept = $stmt->fetch();
+                        
+                        if (!$dept) {
+                            $dept_code = strtoupper(substr($department, 0, 3));
+                            $stmt = $conn->prepare("INSERT INTO departments (dept_name, dept_code) VALUES (?, ?)");
+                            $stmt->execute([$department, $dept_code]);
+                            $dept_id = $conn->lastInsertId();
+                        } else {
+                            $dept_id = $dept['id'];
+                        }
+
+                        $stmt = $conn->prepare("INSERT INTO users (username, password, role_id, dept_id, full_name, email, verification_token, email_verified) VALUES (?, ?, 2, ?, ?, ?, ?, 1)");
+                        $stmt->execute([$username, $hashed_password, $dept_id, $name, $email, $verification_token]);
+
+                        $message = "Registration successful! You can now log in.";
+                        $show_registration = false;
                     }
                 }
-            }
-        }
-    } elseif (isset($_POST['resend_verification'])) {
-        // Handle resend verification email request
-        $resend_username = trim($_POST['resend_username']);
-        if (empty($resend_username)) {
-            $message = "Please enter your username to resend verification email.";
-            $show_resend_form = true;
-        } else {
-            // Lookup user by username
-            $stmt = $conn->prepare("SELECT id, email, username, email_verified FROM users WHERE username = ?");
-            $stmt->execute([$resend_username]);
-            $user = $stmt->fetch(PDO::FETCH_ASSOC);
-
-            if (!$user) {
-                $message = "Username not found.";
-                $show_resend_form = true;
-            } elseif ($user['email_verified'] == 1) {
-                $message = "Your email is already verified. You can log in.";
-            } else {
-                // Generate new verification token
-                $new_token = bin2hex(random_bytes(32));
-                $stmt = $conn->prepare("UPDATE users SET verification_token = ? WHERE id = ?");
-                $stmt->execute([$new_token, $user['id']]);
-
-                // Send verification email
-                $emailSender = new EmailSender();
-                if ($emailSender->sendEmailVerification($user['email'], $user['username'], $new_token)) {
-                    $message = "Verification email resent. Please check your email.";
-                } else {
-                    $message = "Failed to resend verification email. Please contact admin.";
-                }
-                $show_resend_form = false;
+            } catch (PDOException $e) {
+                $message = "Registration error: " . $e->getMessage();
+                error_log("Registration error: " . $e->getMessage());
             }
         }
     }
 }
 ?>
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -134,7 +146,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     <div class="container">
         <h1>Petty Cash System Login</h1>
 
-        <?php if (!empty($message)) echo "<div class='alert alert-info'>$message</div>"; ?>
+        <?php if (!empty($message)): ?>
+            <div class='alert alert-info'><?php echo htmlspecialchars($message); ?></div>
+        <?php endif; ?>
 
         <?php if ($show_registration): ?>
             <h2>Register New Account</h2>
@@ -157,15 +171,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                 <input type="submit" name="register" value="Register">
             </form>
             <p><a href="login.php">Back to Login</a></p>
-        <?php elseif ($show_resend_form): ?>
-            <h2>Resend Verification Email</h2>
-            <p>Please enter your username to resend your email verification link.</p>
-            <form class="login-form" method="POST" action="login.php">
-                <label for="resend_username">Username:</label>
-                <input type="text" id="resend_username" name="resend_username" required value="<?php echo htmlspecialchars($resend_username ?? ''); ?>">
-                <input type="submit" name="resend_verification" value="Resend Verification Email">
-            </form>
-            <p><a href="login.php">Back to Login</a></p>
+            
         <?php else: ?>
             <form class="login-form" method="POST" action="login.php">
                 <label for="username">Username:</label>
@@ -180,6 +186,12 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                 <input type="submit" name="login" value="Login">
             </form>
             <p>Don't have an account? <a href="login.php?register=1">Register here</a></p>
+            
+            <div style="margin-top: 30px; padding: 15px; background: #f0f0f0; border-radius: 5px;">
+                <h3>Demo Accounts:</h3>
+                <p><strong>Admin:</strong> username: <code>admin</code> | password: <code>password</code></p>
+                <p><strong>Employee:</strong> username: <code>emp_it_001</code> | password: <code>password</code></p>
+            </div>
         <?php endif; ?>
     </div>
 
@@ -187,12 +199,18 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     const togglePassword = document.querySelector("#togglePassword");
     const password = document.querySelector("#password");
 
-    togglePassword.addEventListener("click", function () {
-        const type = password.getAttribute("type") === "password" ? "text" : "password";
-        password.setAttribute("type", type);
-        this.classList.toggle("fa-eye");
-        this.classList.toggle("fa-eye-slash");
-    });
+    if (togglePassword && password) {
+        togglePassword.addEventListener("click", function () {
+            const type = password.getAttribute("type") === "password" ? "text" : "password";
+            password.setAttribute("type", type);
+            this.classList.toggle("fa-eye");
+            this.classList.toggle("fa-eye-slash");
+        });
+    }
     </script>
 </body>
 </html>
+<?php
+// Flush output buffer at the end
+ob_end_flush();
+?>
