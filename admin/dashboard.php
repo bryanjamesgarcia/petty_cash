@@ -1,9 +1,25 @@
 <?php
+// Set error reporting
+error_reporting(E_ALL);
+ini_set('display_errors', 1);
+
+// Set session path BEFORE starting session
+$session_path = dirname(__DIR__) . '/sessions';
+if (!is_dir($session_path)) {
+    @mkdir($session_path, 0755, true);
+}
+ini_set('session.save_path', $session_path);
+
 session_start();
+
 require_once '../classes/database.php';
 require_once '../classes/EmailSender.php';
 
+// Debug session
+error_log("Admin Dashboard - Session user: " . print_r($_SESSION['user'] ?? 'NOT SET', true));
+
 if (!isset($_SESSION['user']) || $_SESSION['user']['role'] != 'admin') {
+    error_log("Admin dashboard access denied. Role: " . ($_SESSION['user']['role'] ?? 'NO SESSION'));
     header("Location: ../auth/login.php");
     exit();
 }
@@ -63,8 +79,23 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['add_employee'])) {
             $message = "Username already exists.";
         } else {
             $hashed_password = password_hash($password, PASSWORD_DEFAULT);
-            $stmt = $conn->prepare("INSERT INTO users (username, password, role, name, department) VALUES (?, ?, 'employee', ?, ?)");
-            $stmt->execute([$username, $hashed_password, $name, $department]);
+            
+            // Find or create department
+            $stmt = $conn->prepare("SELECT id FROM departments WHERE dept_name = ?");
+            $stmt->execute([$department]);
+            $dept = $stmt->fetch();
+            
+            if (!$dept) {
+                $dept_code = strtoupper(substr($department, 0, 3));
+                $stmt = $conn->prepare("INSERT INTO departments (dept_name, dept_code) VALUES (?, ?)");
+                $stmt->execute([$department, $dept_code]);
+                $dept_id = $conn->lastInsertId();
+            } else {
+                $dept_id = $dept['id'];
+            }
+            
+            $stmt = $conn->prepare("INSERT INTO users (username, password, role_id, dept_id, full_name) VALUES (?, ?, 2, ?, ?)");
+            $stmt->execute([$username, $hashed_password, $dept_id, $name]);
             $message = "Employee added successfully.";
         }
     }
@@ -95,19 +126,16 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['update_email'])) {
     if (!empty($new_email) && !filter_var($new_email, FILTER_VALIDATE_EMAIL)) {
         $message = "Invalid email format.";
     } else {
-        // Check if email is already used by another user
         if (!empty($new_email)) {
             $stmt = $conn->prepare("SELECT COUNT(*) FROM users WHERE email = ? AND id != ?");
             $stmt->execute([$new_email, $user_id]);
             if ($stmt->fetchColumn() > 0) {
                 $message = "Email already in use by another user.";
             } else {
-                // Update email and set verified to 0, generate new token
                 $verification_token = bin2hex(random_bytes(32));
                 $stmt = $conn->prepare("UPDATE users SET email = ?, email_verified = 0, verification_token = ? WHERE id = ?");
                 $stmt->execute([$new_email, $verification_token, $user_id]);
 
-                // Send verification email
                 $emailSender = new EmailSender();
                 $stmt = $conn->prepare("SELECT username FROM users WHERE id = ?");
                 $stmt->execute([$user_id]);
@@ -119,7 +147,6 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['update_email'])) {
                 }
             }
         } else {
-            // Remove email
             $stmt = $conn->prepare("UPDATE users SET email = NULL, email_verified = 0, verification_token = NULL WHERE id = ?");
             $stmt->execute([$user_id]);
             $message = "Email removed successfully.";
@@ -130,8 +157,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['update_email'])) {
 
 // Fetch data based on section
 if ($section == 'dashboard') {
-    // Summary statistics
-    $stmt = $conn->prepare("SELECT COUNT(*) FROM users WHERE role = 'employee'");
+    $stmt = $conn->prepare("SELECT COUNT(*) FROM users u JOIN roles r ON u.role_id = r.id WHERE r.role_name = 'employee'");
     $stmt->execute();
     $total_employees = $stmt->fetchColumn();
 
@@ -139,19 +165,31 @@ if ($section == 'dashboard') {
     $stmt->execute();
     $total_requests = $stmt->fetchColumn();
 
-    $stmt = $conn->prepare("SELECT COUNT(*) FROM petty_cash_requests WHERE status = 'Pending'");
+    $stmt = $conn->prepare("SELECT COUNT(*) FROM petty_cash_requests pr JOIN request_statuses rs ON pr.status_id = rs.id WHERE rs.status_name = 'Pending'");
     $stmt->execute();
     $pending_requests = $stmt->fetchColumn();
 
-    $stmt = $conn->prepare("SELECT COUNT(*) FROM petty_cash_requests WHERE liquidation_status = 'Pending'");
+    $stmt = $conn->prepare("SELECT COUNT(*) FROM liquidations l JOIN liquidation_statuses ls ON l.status_id = ls.id WHERE ls.status_name = 'Pending'");
     $stmt->execute();
     $pending_liquidations = $stmt->fetchColumn();
 } elseif ($section == 'employee_list') {
-    $stmt = $conn->prepare("SELECT id, username, name, department, role, email, email_verified FROM users WHERE role = 'employee' ORDER BY name");
+    $stmt = $conn->prepare("SELECT u.id, u.username, u.full_name as name, d.dept_name as department, r.role_name as role, u.email, u.email_verified 
+                            FROM users u 
+                            JOIN roles r ON u.role_id = r.id 
+                            LEFT JOIN departments d ON u.dept_id = d.id 
+                            WHERE r.role_name = 'employee' 
+                            ORDER BY u.full_name");
     $stmt->execute();
     $employees = $stmt->fetchAll(PDO::FETCH_ASSOC);
 } elseif ($section == 'view_requests') {
-    $stmt = $conn->prepare("SELECT * FROM petty_cash_requests ORDER BY date_requested DESC");
+    $stmt = $conn->prepare("SELECT pr.*, u.full_name as employee_name, d.dept_name as department, 
+                            rs.status_name as status, ec.category_name as expense_category
+                            FROM petty_cash_requests pr
+                            JOIN users u ON pr.user_id = u.id
+                            LEFT JOIN departments d ON u.dept_id = d.id
+                            JOIN request_statuses rs ON pr.status_id = rs.id
+                            JOIN expense_categories ec ON pr.category_id = ec.id
+                            ORDER BY pr.date_requested DESC");
     $stmt->execute();
     $requests = $stmt->fetchAll(PDO::FETCH_ASSOC);
 }
@@ -224,7 +262,7 @@ if ($section == 'dashboard') {
                         <div class="kpi-card">
                             <h5>Approved Requests</h5>
                             <p class="kpi-value"><?php
-                                $stmt = $conn->prepare("SELECT COUNT(*) FROM petty_cash_requests WHERE status = 'Approved'");
+                                $stmt = $conn->prepare("SELECT COUNT(*) FROM petty_cash_requests pr JOIN request_statuses rs ON pr.status_id = rs.id WHERE rs.status_name = 'Approved'");
                                 $stmt->execute();
                                 echo $stmt->fetchColumn();
                             ?></p>
@@ -236,7 +274,7 @@ if ($section == 'dashboard') {
                         <div class="kpi-card">
                             <h5>Rejected Requests</h5>
                             <p class="kpi-value"><?php
-                                $stmt = $conn->prepare("SELECT COUNT(*) FROM petty_cash_requests WHERE status = 'Rejected'");
+                                $stmt = $conn->prepare("SELECT COUNT(*) FROM petty_cash_requests pr JOIN request_statuses rs ON pr.status_id = rs.id WHERE rs.status_name = 'Rejected'");
                                 $stmt->execute();
                                 echo $stmt->fetchColumn();
                             ?></p>
@@ -244,7 +282,7 @@ if ($section == 'dashboard') {
                         <div class="kpi-card">
                             <h5>Liquidations This Month</h5>
                             <p class="kpi-value"><?php
-                                $stmt = $conn->prepare("SELECT COUNT(*) FROM petty_cash_requests WHERE liquidation_status IN ('Approved', 'Rejected') AND MONTH(date_liquidated) = MONTH(CURRENT_DATE()) AND YEAR(date_liquidated) = YEAR(CURRENT_DATE())");
+                                $stmt = $conn->prepare("SELECT COUNT(*) FROM liquidations WHERE MONTH(date_submitted) = MONTH(CURRENT_DATE()) AND YEAR(date_submitted) = YEAR(CURRENT_DATE())");
                                 $stmt->execute();
                                 echo $stmt->fetchColumn();
                             ?></p>
@@ -254,7 +292,13 @@ if ($section == 'dashboard') {
                     <h3>Expense Breakdown by Category</h3>
                     <div class="expense-breakdown">
                         <?php
-                        $stmt = $conn->prepare("SELECT expense_category, SUM(amount_requested) as total FROM petty_cash_requests WHERE status = 'Approved' GROUP BY expense_category ORDER BY total DESC");
+                        $stmt = $conn->prepare("SELECT ec.category_name as expense_category, SUM(pr.amount_requested) as total 
+                                              FROM petty_cash_requests pr 
+                                              JOIN expense_categories ec ON pr.category_id = ec.id
+                                              JOIN request_statuses rs ON pr.status_id = rs.id
+                                              WHERE rs.status_name = 'Approved' 
+                                              GROUP BY ec.category_name 
+                                              ORDER BY total DESC");
                         $stmt->execute();
                         $categories = $stmt->fetchAll(PDO::FETCH_ASSOC);
                         if ($categories): ?>
@@ -282,7 +326,6 @@ if ($section == 'dashboard') {
                 <?php elseif ($section == 'employee_list'): ?>
                     <h2>Employee List</h2>
 
-                    <!-- Add New Employee Form -->
                     <h3>Add New Employee</h3>
                     <form method="POST" class="mb-4">
                         <div class="row">
@@ -366,58 +409,25 @@ if ($section == 'dashboard') {
                                     <th>Purpose</th>
                                     <th>Date</th>
                                     <th>Status</th>
-                                    <th>Liquidation</th>
                                     <th>Action</th>
                                 </tr>
                             </thead>
                             <tbody>
                                 <?php foreach ($requests as $r): ?>
                                 <tr>
-                                    <td><?= htmlspecialchars($r['request_id']) ?></td>
+                                    <td><?= htmlspecialchars($r['request_number']) ?></td>
                                     <td><?= htmlspecialchars($r['employee_name']) ?></td>
                                     <td><?= htmlspecialchars($r['department']) ?></td>
                                     <td>₱<?= number_format($r['amount_requested'], 2) ?></td>
                                     <td><?= htmlspecialchars($r['expense_category']) ?></td>
                                     <td>
-                                        <?= htmlspecialchars($r['purpose']) ?>
+                                        <?= htmlspecialchars(substr($r['purpose'], 0, 50)) ?>...
                                         <?php if ($r['justification']): ?>
                                             <br><small><strong>Justification:</strong> <?= htmlspecialchars(substr($r['justification'], 0, 50)) ?>...</small>
-                                        <?php endif; ?>
-                                        <?php if ($r['breakdown']): ?>
-                                            <br><small><strong>Breakdown:</strong> <?= htmlspecialchars(substr($r['breakdown'], 0, 50)) ?>...</small>
                                         <?php endif; ?>
                                     </td>
                                     <td><?= htmlspecialchars($r['date_requested']) ?></td>
                                     <td><?= htmlspecialchars($r['status']) ?></td>
-                                    <td>
-                                        <?php if ($r['liquidation_status'] != 'Not Submitted'): ?>
-                                            <?= htmlspecialchars($r['liquidation_status']) ?>
-                                            <?php if ($r['total_spent']): ?>
-                                                <br>Total Spent: ₱<?= number_format($r['total_spent'], 2) ?>
-                                                <?php
-                                                // Fetch expense items
-                                                $stmt_expenses = $conn->prepare("SELECT * FROM liquidation_expenses WHERE request_id = ?");
-                                                $stmt_expenses->execute([$r['request_id']]);
-                                                $expenses = $stmt_expenses->fetchAll(PDO::FETCH_ASSOC);
-                                                if ($expenses): ?>
-                                                    <br><small>Expenses:</small>
-                                                    <?php foreach ($expenses as $exp): ?>
-                                                        <br><small>- <?= htmlspecialchars($exp['description']) ?>: ₱<?= number_format($exp['amount'], 2) ?></small>
-                                                    <?php endforeach; ?>
-                                                <?php endif; ?>
-                                                <?php if ($r['refund_needed'] > 0): ?>
-                                                    <br>Refund Needed: ₱<?= number_format($r['refund_needed'], 2) ?>
-                                                <?php elseif ($r['reimbursement'] > 0): ?>
-                                                    <br>Reimbursement: ₱<?= number_format($r['reimbursement'], 2) ?>
-                                                <?php endif; ?>
-                                                <?php if ($r['receipts']): ?>
-                                                    <br><small>Receipts: <?= htmlspecialchars(substr($r['receipts'], 0, 50)) ?>...</small>
-                                                <?php endif; ?>
-                                            <?php endif; ?>
-                                        <?php else: ?>
-                                            N/A
-                                        <?php endif; ?>
-                                    </td>
                                     <td>
                                         <?php if ($r['status'] == 'Pending'): ?>
                                             <a href="?section=view_requests&action=approve&id=<?= $r['id'] ?>" class="btn btn-sm btn-success">Approve</a>
@@ -427,26 +437,11 @@ if ($section == 'dashboard') {
                                                 <textarea name="rejection_reason" placeholder="Rejection reason" class="form-control" required style="width: 150px; height: 40px;"></textarea>
                                                 <button type="submit" class="btn btn-sm btn-danger mt-1">Reject</button>
                                             </form>
-                                        <?php elseif ($r['liquidation_status'] == 'Pending'): ?>
-                                            <a href="?section=view_requests&action=approve_liquidation&id=<?= $r['id'] ?>" class="btn btn-sm btn-success">Approve Liquidation</a>
-                                            <form method="POST" style="display:inline;" onsubmit="return confirm('Are you sure you want to reject this liquidation?')">
-                                                <input type="hidden" name="action" value="reject_liquidation">
-                                                <input type="hidden" name="id" value="<?= $r['id'] ?>">
-                                                <textarea name="rejection_reason" placeholder="Rejection reason" class="form-control" required style="width: 150px; height: 40px;"></textarea>
-                                                <button type="submit" class="btn btn-sm btn-danger mt-1">Reject Liquidation</button>
-                                            </form>
                                         <?php else: ?>
                                             -
                                         <?php endif; ?>
                                         <?php if ($r['status'] == 'Rejected' && isset($r['rejection_reason']) && $r['rejection_reason']): ?>
                                             <br><small><strong>Rejection Reason:</strong> <?= htmlspecialchars($r['rejection_reason']) ?></small>
-                                        <?php endif; ?>
-                                        <?php if ($r['liquidation_status'] == 'Rejected' && isset($r['rejection_reason']) && $r['rejection_reason']): ?>
-                                            <br><small><strong>Liquidation Rejection Reason:</strong> <?= htmlspecialchars($r['rejection_reason']) ?></small>
-                                        <?php endif; ?>
-                                        <br><a href="printable_request.php?id=<?= $r['id'] ?>" target="_blank" class="btn btn-sm btn-outline-primary">Print Request</a>
-                                        <?php if ($r['liquidation_status'] != 'Not Submitted'): ?>
-                                            <a href="printable_liquidation.php?id=<?= $r['id'] ?>" target="_blank" class="btn btn-sm btn-outline-primary">Print Liquidation</a>
                                         <?php endif; ?>
                                     </td>
                                 </tr>
@@ -460,7 +455,6 @@ if ($section == 'dashboard') {
     </div>
 
     <script>
-    // Function to update pending request count
     function updatePendingCount() {
         fetch('get_pending_count.php')
             .then(response => response.json())
@@ -473,10 +467,7 @@ if ($section == 'dashboard') {
             .catch(error => console.error('Error fetching pending count:', error));
     }
 
-    // Update count on page load
     updatePendingCount();
-
-    // Update count every 30 seconds
     setInterval(updatePendingCount, 30000);
     </script>
 </body>
