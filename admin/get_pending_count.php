@@ -12,11 +12,23 @@ $db = new Database();
 $conn = $db->connect();
 
 try {
-    $stmt = $conn->prepare("SELECT COUNT(*) FROM petty_cash_requests WHERE status = 'Pending'");
+    // Get pending requests count
+    $stmt = $conn->prepare("
+        SELECT COUNT(*) 
+        FROM petty_cash_requests pr 
+        JOIN request_statuses rs ON pr.status_id = rs.id 
+        WHERE rs.status_name = 'Pending'
+    ");
     $stmt->execute();
     $pending_requests = $stmt->fetchColumn();
 
-    $stmt = $conn->prepare("SELECT COUNT(*) FROM petty_cash_requests WHERE liquidation_status = 'Pending'");
+    // Get pending liquidations count
+    $stmt = $conn->prepare("
+        SELECT COUNT(*) 
+        FROM liquidations l
+        JOIN liquidation_statuses ls ON l.status_id = ls.id
+        WHERE ls.status_name = 'Pending'
+    ");
     $stmt->execute();
     $pending_liquidations = $stmt->fetchColumn();
 
@@ -26,6 +38,6 @@ try {
     echo json_encode(['pending_count' => $total_pending]);
 } catch (Exception $e) {
     http_response_code(500);
-    echo json_encode(['error' => 'Database error']);
+    echo json_encode(['error' => 'Database error: ' . $e->getMessage()]);
 }
 ?>
