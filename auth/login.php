@@ -197,12 +197,6 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                 <input type="submit" name="login" value="Login">
             </form>
             <p>Don't have an account? <a href="login.php?register=1">Register here</a></p>
-            
-            <div style="margin-top: 30px; padding: 15px; background: #f0f0f0; border-radius: 5px;">
-                <h3>Demo Accounts:</h3>
-                <p><strong>Admin:</strong> username: <code>admin</code> | password: <code>password</code></p>
-                <p><strong>Employee:</strong> username: <code>emp_it_001</code> | password: <code>password</code></p>
-            </div>
         <?php endif; ?>
     </div>
 
