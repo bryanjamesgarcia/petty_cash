@@ -1,18 +1,16 @@
 <?php
-// START OUTPUT BUFFERING IMMEDIATELY - BEFORE ANYTHING ELSE
-ob_start();
-
-// Set error reporting
+// Set error reporting FIRST
 error_reporting(E_ALL);
 ini_set('display_errors', 1);
 
-// Set session path for InfinityFree
+// Set session path for InfinityFree BEFORE starting session
 $session_path = dirname(__DIR__) . '/sessions';
 if (!is_dir($session_path)) {
     @mkdir($session_path, 0755, true);
 }
 ini_set('session.save_path', $session_path);
 
+// Start session
 session_start();
 
 require_once '../classes/database.php';
@@ -22,7 +20,6 @@ $conn = $db->connect();
 
 $message = '';
 $show_registration = isset($_GET['register']);
-$show_resend_form = false;
 
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     if (isset($_POST['login'])) {
@@ -30,11 +27,12 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         $password = $_POST['password'];
 
         try {
+            // Updated query to match new database schema
             $stmt = $conn->prepare("
                 SELECT u.id, u.username, u.password, r.role_name as role, u.full_name as name, 
                        d.dept_name as department, u.email, u.email_verified, u.is_active 
                 FROM users u
-                LEFT JOIN roles r ON u.role_id = r.id
+                JOIN roles r ON u.role_id = r.id
                 LEFT JOIN departments d ON u.dept_id = d.id
                 WHERE u.username = ? AND u.is_active = 1
             ");
@@ -42,6 +40,10 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             $user = $stmt->fetch(PDO::FETCH_ASSOC);
 
             if ($user && password_verify($password, $user['password'])) {
+                // Regenerate session ID for security
+                session_regenerate_id(true);
+                
+                // Set session variables
                 $_SESSION['user'] = [
                     'id' => $user['id'],
                     'username' => $user['username'],
@@ -49,24 +51,27 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                     'name' => $user['name'],
                     'department' => $user['department']
                 ];
+                
+                // Force session write
+                session_write_close();
+                
+                // Start session again for any further processing
+                session_start();
 
                 // Update last login
                 try {
                     $stmt = $conn->prepare("UPDATE users SET last_login = NOW() WHERE id = ?");
                     $stmt->execute([$user['id']]);
                 } catch (PDOException $e) {
-                    // Ignore if update fails
+                    error_log("Last login update failed: " . $e->getMessage());
                 }
-
-                // CLEAR OUTPUT BUFFER BEFORE REDIRECT
-                ob_end_clean();
                 
-                // Redirect based on role
+                // Redirect based on role - use absolute path
                 if ($user['role'] == 'admin') {
-                    header("Location: ../admin/dashboard.php");
+                    header("Location: " . $_SERVER['REQUEST_SCHEME'] . "://" . $_SERVER['HTTP_HOST'] . dirname($_SERVER['PHP_SELF']) . "/../admin/dashboard.php");
                     exit();
                 } else {
-                    header("Location: ../employee/dashboard.php");
+                    header("Location: " . $_SERVER['REQUEST_SCHEME'] . "://" . $_SERVER['HTTP_HOST'] . dirname($_SERVER['PHP_SELF']) . "/../employee/dashboard.php");
                     exit();
                 }
             } else {
@@ -117,8 +122,14 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                             $dept_id = $dept['id'];
                         }
 
-                        $stmt = $conn->prepare("INSERT INTO users (username, password, role_id, dept_id, full_name, email, verification_token, email_verified) VALUES (?, ?, 2, ?, ?, ?, ?, 1)");
-                        $stmt->execute([$username, $hashed_password, $dept_id, $name, $email, $verification_token]);
+                        // Get employee role_id (should be 2)
+                        $stmt = $conn->prepare("SELECT id FROM roles WHERE role_name = 'employee'");
+                        $stmt->execute();
+                        $role_id = $stmt->fetchColumn();
+
+                        // Insert new user
+                        $stmt = $conn->prepare("INSERT INTO users (username, password, role_id, dept_id, full_name, email, verification_token, email_verified) VALUES (?, ?, ?, ?, ?, ?, ?, 1)");
+                        $stmt->execute([$username, $hashed_password, $role_id, $dept_id, $name, $email, $verification_token]);
 
                         $message = "Registration successful! You can now log in.";
                         $show_registration = false;
@@ -210,7 +221,3 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     </script>
 </body>
 </html>
-<?php
-// Flush output buffer at the end
-ob_end_flush();
-?>
