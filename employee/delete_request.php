@@ -1,4 +1,16 @@
 <?php
+// ============================================
+// employee/delete_request.php
+// ============================================
+?>
+<?php
+// Set session path BEFORE starting session
+$session_path = dirname(__DIR__) . '/sessions';
+if (!is_dir($session_path)) {
+    @mkdir($session_path, 0755, true);
+}
+ini_set('session.save_path', $session_path);
+
 session_start();
 require_once '../classes/database.php';
 
@@ -18,7 +30,9 @@ if (!$request_id) {
 }
 
 // Check if the request is pending and belongs to the user
-$stmt = $conn->prepare("SELECT * FROM petty_cash_requests WHERE id = ? AND user_id = ? AND status = 'Pending'");
+$stmt = $conn->prepare("SELECT pr.* FROM petty_cash_requests pr 
+                        JOIN request_statuses rs ON pr.status_id = rs.id
+                        WHERE pr.id = ? AND pr.user_id = ? AND rs.status_name = 'Pending'");
 $stmt->execute([$request_id, $user['id']]);
 $request = $stmt->fetch(PDO::FETCH_ASSOC);
 
