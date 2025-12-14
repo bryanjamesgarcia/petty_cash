@@ -34,8 +34,28 @@ $user = $_SESSION['user'];
 $db = new Database();
 $conn = $db->connect();
 
-// Fetch employee requests
-$stmt = $conn->prepare("SELECT * FROM petty_cash_requests WHERE user_id = ? ORDER BY date_requested DESC");
+// Fetch employee requests with proper JOIN to get all needed data
+$stmt = $conn->prepare("
+    SELECT 
+        pr.id,
+        pr.request_number,
+        pr.amount_requested,
+        pr.purpose,
+        pr.date_requested,
+        ec.category_name as expense_category,
+        rs.status_name as status,
+        pr.rejection_reason,
+        l.id as liquidation_id,
+        l.total_spent,
+        ls.status_name as liquidation_status
+    FROM petty_cash_requests pr
+    LEFT JOIN expense_categories ec ON pr.category_id = ec.id
+    LEFT JOIN request_statuses rs ON pr.status_id = rs.id
+    LEFT JOIN liquidations l ON pr.id = l.request_id
+    LEFT JOIN liquidation_statuses ls ON l.status_id = ls.id
+    WHERE pr.user_id = ? 
+    ORDER BY pr.date_requested DESC
+");
 $stmt->execute([$user['id']]);
 $requests = $stmt->fetchAll(PDO::FETCH_ASSOC);
 ?>
@@ -57,7 +77,7 @@ $requests = $stmt->fetchAll(PDO::FETCH_ASSOC);
         </div>
 
         <h1>Employee Dashboard</h1>
-        <p>Welcome, <strong><?php echo htmlspecialchars($user['name']); ?></strong> | Department: <strong><?php echo htmlspecialchars($user['department']); ?></strong></p>
+        <p>Welcome, <strong><?php echo htmlspecialchars($user['name']); ?></strong> | Department: <strong><?php echo htmlspecialchars($user['department'] ?? 'N/A'); ?></strong></p>
 
         <h3>My Petty Cash Requests</h3>
         
@@ -81,41 +101,41 @@ $requests = $stmt->fetchAll(PDO::FETCH_ASSOC);
                     <tbody>
                         <?php foreach ($requests as $r): ?>
                         <tr>
-                            <td><?= htmlspecialchars($r['request_id']) ?></td>
-                            <td>₱<?= number_format($r['amount_requested'], 2) ?></td>
-                            <td><?= htmlspecialchars($r['expense_category']) ?></td>
-                            <td><?= htmlspecialchars(substr($r['purpose'], 0, 50)) ?>...</td>
-                            <td><?= htmlspecialchars($r['date_requested']) ?></td>
+                            <td><?= htmlspecialchars($r['request_number'] ?? 'N/A') ?></td>
+                            <td>₱<?= number_format($r['amount_requested'] ?? 0, 2) ?></td>
+                            <td><?= htmlspecialchars($r['expense_category'] ?? 'N/A') ?></td>
+                            <td><?= htmlspecialchars(substr($r['purpose'] ?? '', 0, 50)) ?><?= strlen($r['purpose'] ?? '') > 50 ? '...' : '' ?></td>
+                            <td><?= htmlspecialchars($r['date_requested'] ?? 'N/A') ?></td>
                             <td>
-                                <span class="status-badge status-<?= strtolower($r['status']) ?>">
-                                    <?= htmlspecialchars($r['status']) ?>
+                                <span class="status-badge status-<?= strtolower($r['status'] ?? 'unknown') ?>">
+                                    <?= htmlspecialchars($r['status'] ?? 'Unknown') ?>
                                 </span>
-                                <?php if ($r['status'] == 'Rejected' && $r['rejection_reason']): ?>
+                                <?php if (($r['status'] ?? '') == 'Rejected' && !empty($r['rejection_reason'])): ?>
                                     <br><small><strong>Reason:</strong> <?= htmlspecialchars($r['rejection_reason']) ?></small>
                                 <?php endif; ?>
                             </td>
                             <td>
-                                <?php if ($r['liquidation_status'] != 'Not Submitted'): ?>
+                                <?php if (!empty($r['liquidation_status']) && $r['liquidation_status'] != 'Not Submitted'): ?>
                                     <span class="status-badge status-<?= strtolower($r['liquidation_status']) ?>">
                                         <?= htmlspecialchars($r['liquidation_status']) ?>
                                     </span>
-                                    <?php if ($r['total_spent']): ?>
+                                    <?php if (!empty($r['total_spent'])): ?>
                                         <br><small>Spent: ₱<?= number_format($r['total_spent'], 2) ?></small>
                                     <?php endif; ?>
                                 <?php else: ?>
-                                    N/A
+                                    <span class="status-badge status-pending">Not Submitted</span>
                                 <?php endif; ?>
                             </td>
                             <td>
-                                <?php if ($r['status'] == 'Pending'): ?>
+                                <?php if (($r['status'] ?? '') == 'Pending'): ?>
                                     <a href="edit_request.php?id=<?= $r['id'] ?>" class="action-btn">Edit</a>
                                     <a href="delete_request.php?id=<?= $r['id'] ?>" class="action-btn danger" onclick="return confirm('Are you sure you want to delete this request?')">Delete</a>
-                                <?php elseif ($r['status'] == 'Approved' && $r['liquidation_status'] == 'Not Submitted'): ?>
+                                <?php elseif (($r['status'] ?? '') == 'Approved' && (empty($r['liquidation_status']) || $r['liquidation_status'] == 'Not Submitted')): ?>
                                     <a href="liquidate.php?id=<?= $r['id'] ?>" class="action-btn">Liquidate</a>
                                 <?php endif; ?>
                                 <br>
                                 <a href="../printable_request.php?id=<?= $r['id'] ?>" target="_blank" class="action-btn">Print Request</a>
-                                <?php if ($r['liquidation_status'] != 'Not Submitted'): ?>
+                                <?php if (!empty($r['liquidation_status']) && $r['liquidation_status'] != 'Not Submitted'): ?>
                                     <a href="../printable_liquidation.php?id=<?= $r['id'] ?>" target="_blank" class="action-btn">Print Liquidation</a>
                                 <?php endif; ?>
                             </td>
