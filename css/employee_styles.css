@@ -1,0 +1,373 @@
+/* ==========================
+   EMPLOYEE DASHBOARD STYLES
+========================== */
+
+/* Main container - similar to admin main-content but full width */
+.employee-dashboard {
+    min-height: 100vh;
+    background-color: #f8f9fa;
+    padding: 30px;
+    font-family: 'Poppins', sans-serif;
+}
+
+/* Logout section */
+.logout {
+    text-align: right;
+    margin-bottom: 20px;
+}
+
+.logout a {
+    display: inline-block;
+    padding: 8px 16px;
+    margin-left: 10px;
+    background-color: var(--light);
+    color: var(--dark);
+    text-decoration: none;
+    border-radius: 6px;
+    font-size: 14px;
+    font-weight: 500;
+    transition: all 0.3s ease;
+    border: 1px solid #ddd;
+}
+
+.logout a:hover {
+    background-color: var(--primary);
+    color: white;
+    transform: translateY(-1px);
+}
+
+/* Headings */
+.employee-dashboard h1 {
+    color: var(--dark);
+    font-size: 2.2rem;
+    margin-bottom: 10px;
+    font-weight: 600;
+}
+
+.employee-dashboard h3 {
+    color: var(--dark);
+    font-size: 1.5rem;
+    margin: 30px 0 15px 0;
+    font-weight: 500;
+    border-bottom: 2px solid var(--primary);
+    padding-bottom: 10px;
+}
+
+/* Welcome message */
+.employee-dashboard p {
+    color: #666;
+    font-size: 1.1rem;
+    margin-bottom: 30px;
+}
+
+/* Table wrapper for consistency */
+.table-wrapper {
+    background-color: white;
+    border-radius: 12px;
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.08);
+    overflow: hidden;
+    margin-top: 20px;
+}
+
+.employee-dashboard table {
+    width: 100%;
+    border-collapse: collapse;
+    background-color: white;
+    min-width: 1200px;
+}
+
+.employee-dashboard th,
+.employee-dashboard td {
+    padding: 15px;
+    text-align: left;
+    vertical-align: top;
+}
+
+.employee-dashboard th {
+    background-color: #f8f9fa;
+    color: #333;
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    border-bottom: 2px solid #e9ecef;
+}
+
+.employee-dashboard td {
+    border-bottom: 1px solid #f0f0f0;
+    font-size: 14px;
+    color: #333;
+}
+
+.employee-dashboard tr:hover {
+    background-color: #f8f9fa;
+}
+
+.employee-dashboard tr:last-child td {
+    border-bottom: none;
+}
+
+/* Status badges */
+.status-badge {
+    padding: 4px 8px;
+    border-radius: 12px;
+    font-size: 11px;
+    font-weight: 600;
+    display: inline-block;
+    text-transform: capitalize;
+}
+
+.status-approved {
+    background-color: #d4edda;
+    color: #155724;
+}
+
+.status-rejected {
+    background-color: #f8d7da;
+    color: #721c24;
+}
+
+.status-pending {
+    background-color: #fff3cd;
+    color: #856404;
+}
+
+.status-completed {
+    background-color: #d1ecf1;
+    color: #0c5460;
+}
+
+/* Action links */
+.employee-dashboard a {
+    color: var(--primary);
+    text-decoration: none;
+    font-weight: 500;
+    transition: color 0.3s ease;
+}
+
+.employee-dashboard a:hover {
+    color: var(--secondary);
+    text-decoration: underline;
+}
+
+/* Action buttons */
+.action-btn {
+    display: inline-block;
+    padding: 6px 12px;
+    margin: 2px 0;
+    background-color: var(--primary);
+    color: white;
+    text-decoration: none;
+    border-radius: 4px;
+    font-size: 12px;
+    font-weight: 500;
+    transition: all 0.3s ease;
+}
+
+.action-btn:hover {
+    background-color: var(--secondary);
+    transform: translateY(-1px);
+}
+
+.action-btn.danger {
+    background-color: var(--danger);
+}
+
+.action-btn.danger:hover {
+    background-color: #c0392b;
+}
+
+/* Small text for additional info */
+.employee-dashboard small {
+    font-size: 12px;
+    color: #333;
+    line-height: 1.4;
+}
+
+/* Fix for LIQUIDATION and ACTION column text visibility - keep backgrounds but make text readable */
+.employee-dashboard td:nth-child(8),
+.employee-dashboard td:nth-child(9) {
+    position: relative;
+}
+
+/* Make links white and bold to stand out on colored backgrounds */
+.employee-dashboard td:nth-child(8) a,
+.employee-dashboard td:nth-child(9) a {
+    color: white !important;
+    font-weight: 600 !important;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+}
+
+/* ==========================
+   ADD REQUEST FORM STYLES
+========================== */
+
+/* Add request container */
+.add-request-container {
+    max-width: 800px;
+    margin: 0 auto;
+    padding: 30px;
+    background-color: white;
+    border-radius: 12px;
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.08);
+    font-family: 'Poppins', sans-serif;
+}
+
+/* Page title */
+.add-request-container h2 {
+    color: var(--dark);
+    font-size: 2rem;
+    margin-bottom: 20px;
+    font-weight: 600;
+    text-align: center;
+    border-bottom: 2px solid var(--primary);
+    padding-bottom: 15px;
+}
+
+/* Employee info */
+.add-request-container p {
+    background-color: #f8f9fa;
+    padding: 15px;
+    border-radius: 8px;
+    margin-bottom: 30px;
+    color: #333;
+    font-size: 1rem;
+    text-align: center;
+    border: 1px solid #e9ecef;
+}
+
+.add-request-container p strong {
+    color: var(--primary);
+    font-weight: 600;
+}
+
+/* Form styling */
+.add-request-form {
+    display: grid;
+    gap: 20px;
+}
+
+.add-request-form label {
+    display: block;
+    margin-bottom: 8px;
+    color: #333;
+    font-weight: 600;
+    font-size: 14px;
+}
+
+.add-request-form input[type="number"],
+.add-request-form textarea,
+.add-request-form select {
+    width: 100%;
+    padding: 12px 15px;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    font-size: 14px;
+    font-family: 'Poppins', sans-serif;
+    transition: all 0.3s ease;
+    background-color: white;
+}
+
+.add-request-form input[type="number"]:focus,
+.add-request-form textarea:focus,
+.add-request-form select:focus {
+    border-color: var(--primary);
+    box-shadow: 0 0 8px rgba(26, 188, 156, 0.4);
+    outline: none;
+}
+
+.add-request-form textarea {
+    min-height: 80px;
+    resize: vertical;
+}
+
+.add-request-form select {
+    cursor: pointer;
+}
+
+/* Submit button */
+.add-request-form button[type="submit"] {
+    width: 100%;
+    padding: 15px;
+    background: linear-gradient(135deg, var(--primary), var(--secondary));
+    color: white;
+    border: none;
+    border-radius: 8px;
+    font-size: 16px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-top: 10px;
+}
+
+.add-request-form button[type="submit"]:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 25px rgba(26, 188, 156, 0.3);
+}
+
+/* Back link */
+.add-request-container .back-link {
+    display: inline-block;
+    margin-top: 20px;
+    padding: 10px 20px;
+    background-color: var(--light);
+    color: var(--dark);
+    text-decoration: none;
+    border-radius: 6px;
+    font-weight: 500;
+    transition: all 0.3s ease;
+    border: 1px solid #ddd;
+}
+
+.add-request-container .back-link:hover {
+    background-color: var(--primary);
+    color: white;
+    transform: translateY(-1px);
+}
+
+/* Responsive for add request */
+@media (max-width: 768px) {
+    .add-request-container {
+        padding: 20px 15px;
+        margin: 20px;
+    }
+
+    .add-request-container h2 {
+        font-size: 1.8rem;
+    }
+
+    .add-request-form {
+        gap: 15px;
+    }
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+    .employee-dashboard {
+        padding: 20px 15px;
+    }
+
+    .employee-dashboard h1 {
+        font-size: 1.8rem;
+    }
+
+    .employee-dashboard h3 {
+        font-size: 1.3rem;
+    }
+
+    .logout {
+        text-align: left;
+    }
+
+    .logout a {
+        display: block;
+        margin: 5px 0;
+        text-align: center;
+    }
+
+    .table-wrapper {
+        overflow-x: auto;
+    }
+}

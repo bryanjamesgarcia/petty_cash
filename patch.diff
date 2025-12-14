@@ -1,0 +1,16 @@
+<<<<<<<
+        $conn->exec($sql);
+
+        $sql = "CREATE TABLE IF NOT EXISTS petty_cash_requests (
+=======
+        $conn->exec($sql);
+
+        // Add email_verified column if it does not exist yet
+        try {
+            $conn->exec("ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified TINYINT(1) DEFAULT 0");
+        } catch (PDOException $e) {
+            // Column might already exist, ignore error
+        }
+
+        $sql = "CREATE TABLE IF NOT EXISTS petty_cash_requests (
+>>>>>>>
