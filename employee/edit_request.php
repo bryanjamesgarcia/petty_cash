@@ -10,7 +10,7 @@ if (!is_dir($session_path)) {
     @mkdir($session_path, 0755, true);
 }
 ini_set('session.save_path', $session_path);
- 
+
 session_start();
 require_once '../classes/database.php';
 
