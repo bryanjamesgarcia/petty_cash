@@ -1,8 +1,24 @@
 <?php
+// Set error reporting
+error_reporting(E_ALL);
+ini_set('display_errors', 1);
+
+// Set session path BEFORE starting session
+$session_path = dirname(__DIR__) . '/sessions';
+if (!is_dir($session_path)) {
+    @mkdir($session_path, 0755, true);
+}
+ini_set('session.save_path', $session_path);
+
 session_start();
+
 require_once '../classes/database.php';
 
+// Debug logging
+error_log("Add request page - Session: " . print_r($_SESSION['user'] ?? 'NOT SET', true));
+
 if (!isset($_SESSION['user']) || $_SESSION['user']['role'] != 'employee') {
+    error_log("Access denied to add_request. Role: " . ($_SESSION['user']['role'] ?? 'NO SESSION'));
     header("Location: ../auth/login.php");
     exit();
 }
@@ -20,31 +36,54 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     $justification = $_POST['justification'];
     $breakdown = $_POST['breakdown'];
     $date_requested = date("Y-m-d");
-    $status = "Pending";
 
-    $stmt = $conn->prepare("INSERT INTO petty_cash_requests (user_id, employee_name, department, amount_requested, purpose, expense_category, justification, breakdown, date_requested, status)
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
-    $stmt->execute([$user['id'], $employee_name, $department, $amount_requested, $purpose, $expense_category, $justification, $breakdown, $date_requested, $status]);
+    try {
+        // Get the category_id and status_id
+        $stmt = $conn->prepare("SELECT id FROM expense_categories WHERE category_name = ?");
+        $stmt->execute([$expense_category]);
+        $category_id = $stmt->fetchColumn();
 
-    // Auto-generate request_id
-    $last_id = $conn->lastInsertId();
-    $request_id = 'PCR-' . str_pad($last_id, 3, '0', STR_PAD_LEFT);
-    $stmt = $conn->prepare("UPDATE petty_cash_requests SET request_id = ? WHERE id = ?");
-    $stmt->execute([$request_id, $last_id]);
+        $stmt = $conn->prepare("SELECT id FROM request_statuses WHERE status_name = 'Pending'");
+        $stmt->execute();
+        $status_id = $stmt->fetchColumn();
 
-    // Send email notification to admin
-    $stmt_admin = $conn->prepare("SELECT email FROM users WHERE role = 'admin' LIMIT 1");
-    $stmt_admin->execute();
-    $admin = $stmt_admin->fetch(PDO::FETCH_ASSOC);
+        // Insert the request
+        $stmt = $conn->prepare("INSERT INTO petty_cash_requests (user_id, category_id, status_id, amount_requested, purpose, justification, breakdown, date_requested)
+                                VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
+        $stmt->execute([$user['id'], $category_id, $status_id, $amount_requested, $purpose, $justification, $breakdown, $date_requested]);
 
-    if ($admin && $admin['email']) {
-        require_once '../classes/EmailSender.php';
-        $emailSender = new EmailSender();
-        $emailSender->sendNewRequestNotification($admin['email'], $employee_name, $request_id, $amount_requested, $purpose);
+        // Auto-generate request_number
+        $last_id = $conn->lastInsertId();
+        $request_number = 'PCR-' . str_pad($last_id, 5, '0', STR_PAD_LEFT);
+        $stmt = $conn->prepare("UPDATE petty_cash_requests SET request_number = ? WHERE id = ?");
+        $stmt->execute([$request_number, $last_id]);
+
+        // Send email notification to admin (optional)
+        try {
+            $stmt_admin = $conn->prepare("SELECT u.email FROM users u JOIN roles r ON u.role_id = r.id WHERE r.role_name = 'admin' AND u.email IS NOT NULL LIMIT 1");
+            $stmt_admin->execute();
+            $admin = $stmt_admin->fetch(PDO::FETCH_ASSOC);
+
+            if ($admin && $admin['email']) {
+                require_once '../classes/EmailSender.php';
+                $emailSender = new EmailSender();
+                $emailSender->sendNewRequestNotification($admin['email'], $employee_name, $request_number, $amount_requested, $purpose);
+            }
+        } catch (Exception $e) {
+            error_log("Email notification failed: " . $e->getMessage());
+        }
+
+        echo "<script>alert('Request submitted successfully! Request ID: $request_number'); window.location.href='dashboard.php';</script>";
+    } catch (PDOException $e) {
+        error_log("Request creation error: " . $e->getMessage());
+        $error_message = "Error submitting request: " . $e->getMessage();
     }
-
-    echo "<script>alert('Request submitted successfully! Request ID: $request_id'); window.location.href='dashboard.php';</script>";
 }
+
+// Fetch available categories
+$stmt = $conn->prepare("SELECT category_name FROM expense_categories WHERE is_active = 1 ORDER BY category_name");
+$stmt->execute();
+$categories = $stmt->fetchAll(PDO::FETCH_COLUMN);
 ?>
 
 <!DOCTYPE html>
@@ -60,10 +99,17 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     <div class="add-request-container">
         <h2>Add Petty Cash Request</h2>
         <p><strong>Employee:</strong> <?php echo htmlspecialchars($user['name']); ?> | <strong>Department:</strong> <?php echo htmlspecialchars($user['department']); ?></p>
+        
+        <?php if (isset($error_message)): ?>
+            <div style="background: #f8d7da; color: #721c24; padding: 15px; border-radius: 5px; margin: 15px 0;">
+                <?php echo htmlspecialchars($error_message); ?>
+            </div>
+        <?php endif; ?>
+        
         <form method="POST" class="add-request-form">
             <div>
                 <label>Amount Requested (₱):</label>
-                <input type="number" step="0.01" name="amount_requested" required>
+                <input type="number" step="0.01" name="amount_requested" required min="0">
             </div>
 
             <div>
@@ -75,11 +121,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                 <label>Expense Category:</label>
                 <select name="expense_category" required>
                     <option value="">Select Category</option>
-                    <option value="Office Supplies">Office Supplies</option>
-                    <option value="Travel">Travel</option>
-                    <option value="Meals">Meals</option>
-                    <option value="Transportation">Transportation</option>
-                    <option value="Miscellaneous">Miscellaneous</option>
+                    <?php foreach ($categories as $cat): ?>
+                        <option value="<?php echo htmlspecialchars($cat); ?>"><?php echo htmlspecialchars($cat); ?></option>
+                    <?php endforeach; ?>
                 </select>
             </div>
 
